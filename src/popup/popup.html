@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>中文视频转录</h1>
+      <p class="subtitle">录制 → 转录 → 下载Markdown</p>
+    </header>
+
+    <div id="tab-info" class="tab-info">
+      <span class="label">当前标签页:</span>
+      <span id="tab-title" class="tab-title">加载中...</span>
+    </div>
+
+    <div id="status-area" class="status-area">
+      <div id="status-indicator" class="status-indicator idle">
+        <span id="status-dot" class="status-dot"></span>
+        <span id="status-text">就绪</span>
+      </div>
+      <div id="timer" class="timer" style="display:none">00:00</div>
+    </div>
+
+    <div id="progress-area" class="progress-area" style="display:none">
+      <div class="progress-label">
+        <span id="progress-status">处理中...</span>
+        <span id="progress-percent">0%</span>
+      </div>
+      <div class="progress-bar">
+        <div id="progress-fill" class="progress-fill" style="width:0%"></div>
+      </div>
+      <div id="progress-detail" class="progress-detail"></div>
+    </div>
+
+    <div id="result-area" class="result-area" style="display:none">
+      <div class="result-icon">&#10003;</div>
+      <div id="result-text" class="result-text">转录完成！</div>
+      <div id="result-detail" class="result-detail"></div>
+    </div>
+
+    <div id="error-area" class="error-area" style="display:none">
+      <div id="error-text" class="error-text"></div>
+    </div>
+
+    <div class="actions">
+      <button id="btn-start" class="btn btn-start">开始录制</button>
+      <button id="btn-stop" class="btn btn-stop" style="display:none">停止并转录</button>
+      <button id="btn-pause" class="btn btn-pause" style="display:none">暂停</button>
+      <button id="btn-resume" class="btn btn-resume" style="display:none">继续</button>
+    </div>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

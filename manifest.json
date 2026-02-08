@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Chinese Video Auto-Transcriptor",
+  "version": "1.0.0",
+  "description": "自动转录中文视频音频，生成带时间戳的Markdown文件",
+  "permissions": ["activeTab", "tabCapture", "offscreen", "storage", "downloads", "scripting"],
+  "background": {
+    "service_worker": "src/background/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "src/assets/icon-16.png",
+      "48": "src/assets/icon-48.png",
+      "128": "src/assets/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "src/assets/icon-16.png",
+    "48": "src/assets/icon-48.png",
+    "128": "src/assets/icon-128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["*.wasm", "*.mjs", "assets/*.wasm"],
+      "matches": []
+    }
+  ]
+}
