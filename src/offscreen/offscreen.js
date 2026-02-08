@@ -89,14 +89,6 @@ async function startRecording(streamId, title, url) {
     };
 
     mediaRecorder.onstop = () => {
-      // Close audioContext to mute playback immediately
-      if (audioContext) {
-        audioContext.close();
-        audioContext = null;
-      }
-      // Mute tracks but keep them alive so Chrome doesn't terminate the
-      // offscreen document (created with USER_MEDIA reason) mid-transcription.
-      stream.getTracks().forEach((track) => { track.enabled = false; });
       transcribeAudio();
     };
 
@@ -143,6 +135,10 @@ function loadWhisperPipeline() {
 }
 
 function cleanupMediaTracks() {
+  if (audioContext) {
+    audioContext.close();
+    audioContext = null;
+  }
   if (activeStream) {
     activeStream.getTracks().forEach((track) => track.stop());
     activeStream = null;
