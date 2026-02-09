@@ -205,7 +205,7 @@
         break;
       case 'transcribing':
         statusEl.textContent = '转录中...';
-        timerEl.textContent = '';
+        timerEl.textContent = data.progress != null ? `${Math.round(data.progress)}%` : '';
         break;
       case 'complete':
         statusEl.textContent = '完成';

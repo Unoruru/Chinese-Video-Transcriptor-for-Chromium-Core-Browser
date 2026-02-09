@@ -99,6 +99,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Popup may be closed, that's fine
     });
 
+    // Forward transcription/model progress to content script overlay
+    if (
+      (message.type === MSG.TRANSCRIPTION_PROGRESS || message.type === MSG.MODEL_DOWNLOAD_PROGRESS) &&
+      statusTabId
+    ) {
+      chrome.tabs.sendMessage(statusTabId, {
+        type: MSG.CONTENT_STATUS_UPDATE,
+        state: 'transcribing',
+        progress: message.progress,
+      }).catch(() => {});
+    }
+
     // Handle completion and error states
     if (message.type === MSG.TRANSCRIPTION_COMPLETE) {
       setBadge('✓', '#43a047');
