@@ -73,55 +73,65 @@ async function asyncTranscribe(apiKey, audioBlob, onProgress) {
 }
 
 /**
- * Upload audio file to DashScope and get a hosted URL.
+ * Upload audio file to DashScope via getPolicy + OSS POST flow.
+ * Returns an oss:// URL for use with the async transcription API.
  */
 async function uploadFile(apiKey, audioBlob) {
-  // Step 1: Request upload lease
-  const leaseResponse = await fetch(
-    `${DASHSCOPE_BASE_URL}/api/v1/uploads`,
+  // Step 1: Get upload policy credentials
+  const policyResponse = await fetch(
+    `${DASHSCOPE_BASE_URL}/api/v1/uploads?action=getPolicy&model=paraformer-v2`,
     {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'paraformer-v2',
-        file_name: 'audio.webm',
-        file_size: audioBlob.size,
-        content_type: 'audio/webm',
-      }),
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}` },
     },
   );
 
-  if (!leaseResponse.ok) {
-    const body = await leaseResponse.text().catch(() => '');
-    throw new Error(`File upload lease failed (${leaseResponse.status}): ${body}`);
+  if (!policyResponse.ok) {
+    const body = await policyResponse.text().catch(() => '');
+    throw new Error(`Upload getPolicy failed (${policyResponse.status}): ${body}`);
   }
 
-  const leaseData = await leaseResponse.json();
-  console.log('[DashScope] Upload lease:', leaseData);
+  const policyData = await policyResponse.json();
+  console.log('[DashScope] Upload policy:', policyData);
 
-  const { upload_url: uploadUrl, upload_headers: uploadHeaders, oss_url: ossUrl } =
-    leaseData.data || leaseData;
+  const {
+    upload_host: uploadHost,
+    upload_dir: uploadDir,
+    policy,
+    signature,
+    oss_access_key_id: ossAccessKeyId,
+    x_oss_object_acl: xOssObjectAcl,
+    x_oss_forbid_overwrite: xOssForbidOverwrite,
+  } = policyData.data;
 
-  // Step 2: Upload the file to the pre-signed URL
-  const headers = {};
-  if (uploadHeaders) {
-    for (const [key, value] of Object.entries(uploadHeaders)) {
-      headers[key] = value;
-    }
-  }
+  // Step 2: POST multipart/form-data to OSS
+  const fileName = `audio_${Date.now()}.webm`;
+  const objectKey = `${uploadDir}/${fileName}`;
 
-  const uploadResponse = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers,
-    body: audioBlob,
+  const formData = new FormData();
+  formData.append('OSSAccessKeyId', ossAccessKeyId);
+  formData.append('policy', policy);
+  formData.append('Signature', signature);
+  formData.append('key', objectKey);
+  formData.append('x-oss-object-acl', xOssObjectAcl);
+  formData.append('x-oss-forbid-overwrite', xOssForbidOverwrite);
+  formData.append('success_action_status', '200');
+  formData.append('file', audioBlob, fileName); // file must be last per OSS spec
+
+  const uploadResponse = await fetch(uploadHost, {
+    method: 'POST',
+    body: formData,
   });
 
   if (!uploadResponse.ok) {
-    throw new Error(`File upload failed (${uploadResponse.status})`);
+    const body = await uploadResponse.text().catch(() => '');
+    throw new Error(`OSS upload failed (${uploadResponse.status}): ${body}`);
   }
+
+  // Step 3: Construct oss:// URL from upload_host and key
+  const url = new URL(uploadHost);
+  const bucket = url.hostname.split('.')[0];
+  const ossUrl = `oss://${bucket}/${objectKey}`;
 
   console.log('[DashScope] File uploaded to:', ossUrl);
   return ossUrl;
@@ -139,6 +149,7 @@ async function submitTask(apiKey, fileUrl) {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'X-DashScope-Async': 'enable',
+        'X-DashScope-OssResourceResolve': 'enable',
       },
       body: JSON.stringify({
         model: 'paraformer-v2',
