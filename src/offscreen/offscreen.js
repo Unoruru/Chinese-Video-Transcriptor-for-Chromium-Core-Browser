@@ -1,9 +1,3 @@
-// Prevent @huggingface/transformers from probing WebGPU internally
-// (triggers Chrome Windows bug crbug.com/369219127 powerPreference warning)
-if (typeof navigator !== 'undefined' && navigator.gpu) {
-  Object.defineProperty(navigator, 'gpu', { value: undefined });
-}
-
 import { pipeline, env } from '@huggingface/transformers';
 import * as OpenCC from 'opencc-js';
 import { MSG } from '../utils/messages.js';
@@ -20,6 +14,22 @@ env.allowLocalModels = false;
 env.useBrowserCache = true;
 env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('/');
 env.backends.onnx.wasm.numThreads = navigator.hardwareConcurrency || 4;
+
+async function detectDevice() {
+  if (typeof navigator !== 'undefined' && navigator.gpu) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter) {
+        console.log('[Whisper] WebGPU adapter found');
+        return 'webgpu';
+      }
+    } catch (err) {
+      console.warn('[Whisper] WebGPU probe failed:', err.message);
+    }
+  }
+  console.log('[Whisper] WebGPU unavailable, falling back to WASM');
+  return 'wasm';
+}
 
 let mediaRecorder = null;
 let audioChunks = [];
@@ -122,13 +132,19 @@ function resumeRecording() {
 function loadWhisperPipeline() {
   if (whisperPipelinePromise) return whisperPipelinePromise;
   whisperPipelinePromise = (async () => {
-    console.log('[Whisper] Using device: wasm');
+    const device = await detectDevice();
+    // WebGPU: fp32 (GPU shaders optimized for float math)
+    // WASM: q8 (quantized, smaller download, fast on CPU)
+    const dtype = device === 'webgpu'
+      ? { encoder_model: 'fp32', decoder_model_merged: 'fp32' }
+      : { encoder_model: 'q8', decoder_model_merged: 'q8' };
+    console.log(`[Whisper] Using device: ${device}, dtype:`, dtype);
     return await pipeline('automatic-speech-recognition', WHISPER_MODEL, {
-      device: 'wasm',
-      dtype: { encoder_model: 'q8', decoder_model_merged: 'q8' },
+      device,
+      dtype,
     });
   })().catch((err) => {
-    whisperPipelinePromise = null; // allow retry on transient failure
+    whisperPipelinePromise = null;
     throw err;
   });
   return whisperPipelinePromise;
