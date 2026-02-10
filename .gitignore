@@ -3,6 +3,5 @@ dist/
 .DS_Store
 *.log
 
-# Ignore .gemini settings file
-.gemini
-
+# Ignore .gemini directory if it exists
+.gemini/
