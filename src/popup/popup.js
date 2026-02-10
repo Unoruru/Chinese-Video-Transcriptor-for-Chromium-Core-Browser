@@ -20,6 +20,13 @@ const btnStart = document.getElementById('btn-start');
 const btnStop = document.getElementById('btn-stop');
 const btnPause = document.getElementById('btn-pause');
 const btnResume = document.getElementById('btn-resume');
+const btnSettings = document.getElementById('btn-settings');
+const settingsPanel = document.getElementById('settings-panel');
+const apiKeyInput = document.getElementById('api-key-input');
+const btnToggleKey = document.getElementById('btn-toggle-key');
+const btnSaveKey = document.getElementById('btn-save-key');
+const btnClearKey = document.getElementById('btn-clear-key');
+const apiStatus = document.getElementById('api-status');
 
 let timerInterval = null;
 let recordingStartTime = null;
@@ -30,6 +37,9 @@ async function init() {
   if (tab) {
     tabTitleEl.textContent = tab.title || tab.url;
   }
+
+  // Load API key status
+  await loadApiKeyStatus();
 
   // Check if already recording
   const response = await chrome.runtime.sendMessage({ type: MSG.GET_STATUS });
@@ -262,5 +272,47 @@ chrome.runtime.onMessage.addListener((message) => {
 
   return false;
 });
+
+// Settings panel handlers
+btnSettings.addEventListener('click', () => {
+  const isExpanded = btnSettings.getAttribute('aria-expanded') === 'true';
+  btnSettings.setAttribute('aria-expanded', String(!isExpanded));
+  settingsPanel.style.display = isExpanded ? 'none' : 'block';
+});
+
+btnSaveKey.addEventListener('click', async () => {
+  const key = apiKeyInput.value.trim();
+  if (!key) return;
+  await chrome.storage.local.set({ dashscopeApiKey: key });
+  apiKeyInput.value = '';
+  updateApiStatus(true);
+});
+
+btnClearKey.addEventListener('click', async () => {
+  await chrome.storage.local.remove('dashscopeApiKey');
+  apiKeyInput.value = '';
+  updateApiStatus(false);
+});
+
+btnToggleKey.addEventListener('click', () => {
+  const isPassword = apiKeyInput.type === 'password';
+  apiKeyInput.type = isPassword ? 'text' : 'password';
+  btnToggleKey.setAttribute('aria-label', isPassword ? '隐藏密钥' : '显示密钥');
+});
+
+async function loadApiKeyStatus() {
+  const data = await chrome.storage.local.get('dashscopeApiKey');
+  updateApiStatus(Boolean(data.dashscopeApiKey));
+}
+
+function updateApiStatus(configured) {
+  if (configured) {
+    apiStatus.textContent = '云端转录已启用';
+    apiStatus.className = 'api-status configured';
+  } else {
+    apiStatus.textContent = '使用本地Whisper模型';
+    apiStatus.className = 'api-status not-configured';
+  }
+}
 
 init();

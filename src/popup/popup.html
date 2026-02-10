@@ -10,7 +10,22 @@
     <header>
       <h1>中文视频转录</h1>
       <p class="subtitle">录制 → 转录 → 下载Markdown</p>
+      <button id="btn-settings" class="btn-settings" type="button" aria-label="设置" aria-expanded="false" aria-controls="settings-panel">&#9881;</button>
     </header>
+
+    <div id="settings-panel" class="settings-panel" style="display:none" role="region" aria-label="设置">
+      <label for="api-key-input">DashScope API Key</label>
+      <div class="api-key-row">
+        <input type="password" id="api-key-input" placeholder="sk-..." autocomplete="off">
+        <button id="btn-toggle-key" class="btn-icon" type="button" aria-label="显示密钥">&#128065;</button>
+      </div>
+      <p class="settings-hint">输入API Key启用云端转录（更快）。留空使用本地Whisper。</p>
+      <div class="settings-actions">
+        <button id="btn-save-key" class="btn btn-save" type="button">保存</button>
+        <button id="btn-clear-key" class="btn btn-clear" type="button">清除</button>
+      </div>
+      <div id="api-status" class="api-status" aria-live="polite"></div>
+    </div>
 
     <div id="tab-info" class="tab-info">
       <span class="label">当前标签页:</span>

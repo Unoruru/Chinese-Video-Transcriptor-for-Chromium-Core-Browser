@@ -5,6 +5,7 @@ import { WHISPER_MODEL, sanitizeFilename } from '../utils/constants.js';
 import { generateMarkdown } from '../utils/markdown-generator.js';
 import { filterHallucinations } from '../utils/hallucination-filter.js';
 import { blobToFloat32Audio } from './audio-processor.js';
+import { transcribe as dashscopeTranscribe } from '../utils/dashscope.js';
 
 // Traditional Chinese → Simplified Chinese converter
 const t2s = OpenCC.Converter({ from: 'tw', to: 'cn' });
@@ -40,11 +41,25 @@ let audioContext = null;
 let activeStream = null;
 let whisperPipelinePromise = null;
 
-// Pre-load Whisper model as soon as offscreen document is created.
-// By the time the user stops recording, the model is already warm.
-loadWhisperPipeline().catch((err) => {
-  console.warn('[Whisper] Pre-load failed (will retry on transcription):', err.message);
+// Only pre-load Whisper if no DashScope API key is configured.
+// When cloud transcription is available, skip the heavy model download.
+getApiKey().then((key) => {
+  if (!key) {
+    loadWhisperPipeline().catch((err) => {
+      console.warn('[Whisper] Pre-load failed (will retry on transcription):', err.message);
+    });
+  } else {
+    console.log('[DashScope] API key configured — skipping Whisper pre-load');
+  }
 });
+
+async function getApiKey() {
+  if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+    return '';
+  }
+  const data = await chrome.storage.local.get('dashscopeApiKey');
+  return data.dashscopeApiKey || '';
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === MSG.OFFSCREEN_START_RECORDING) {
@@ -170,50 +185,22 @@ async function transcribeAudio() {
 
   try {
     const duration = (Date.now() - recordingStartTime) / 1000;
+    const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
 
     sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress: 0, status: '正在处理音频...' });
 
-    // Convert recorded audio to Float32Array at 16kHz
-    const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
-    const audioData = await blobToFloat32Audio(audioBlob);
+    const apiKey = await getApiKey();
+    let segments;
 
-    sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress: 10, status: '正在加载模型...' });
-
-    // Load Whisper pipeline
-    const transcriber = await loadWhisperPipeline();
-
-    sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress: 20, status: '正在转录...' });
-
-    // Estimate transcription time and report progress via interval
-    const audioDurationSec = audioData.length / 16000;
-    const estimatedTranscriptionSec = Math.max(audioDurationSec * 0.5, 10);
-    const progressStart = Date.now();
-    const progressInterval = setInterval(() => {
-      const elapsed = (Date.now() - progressStart) / 1000;
-      const ratio = Math.min(elapsed / estimatedTranscriptionSec, 0.95);
-      const progress = 20 + Math.round(ratio * 70);
-      sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress, status: `正在转录 (${Math.round(ratio * 100)}%)...` });
-    }, 2000);
-
-    let result;
-    try {
-      result = await transcriber(audioData, {
-        language: 'zh',
-        task: 'transcribe',
-        return_timestamps: true,
-        chunk_length_s: 30,
-        stride_length_s: 5,
-        no_repeat_ngram_size: 6,
-        repetition_penalty: 1.1,
-      });
-    } finally {
-      clearInterval(progressInterval);
+    if (apiKey) {
+      // Cloud transcription via DashScope Paraformer
+      segments = await transcribeWithDashScope(apiKey, audioBlob, duration);
+    } else {
+      // Local transcription via Whisper
+      segments = await transcribeWithWhisper(audioBlob, duration);
     }
 
     sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress: 90, status: '正在生成文件...' });
-
-    // Generate markdown
-    const segments = result.chunks || [{ timestamp: [0, duration], text: result.text }];
 
     // Convert Traditional Chinese to Simplified Chinese
     for (const seg of segments) {
@@ -247,6 +234,69 @@ async function transcribeAudio() {
     clearInterval(keepAliveInterval);
     cleanupMediaTracks();
   }
+}
+
+async function transcribeWithDashScope(apiKey, audioBlob, duration) {
+  const onProgress = (progress, status) => {
+    sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress, status });
+  };
+
+  try {
+    const segments = await dashscopeTranscribe(apiKey, audioBlob, onProgress);
+    if (segments.length === 0) {
+      return [{ text: '', timestamp: [0, duration] }];
+    }
+    return segments;
+  } catch (err) {
+    console.error('[DashScope] Cloud transcription failed:', err);
+    sendMsg({
+      type: MSG.TRANSCRIPTION_PROGRESS,
+      progress: 5,
+      status: '云端转录失败，切换到本地模型...',
+    });
+    // Fall back to local Whisper
+    return await transcribeWithWhisper(audioBlob, duration);
+  }
+}
+
+async function transcribeWithWhisper(audioBlob, duration) {
+  sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress: 5, status: '正在处理音频...' });
+
+  const audioData = await blobToFloat32Audio(audioBlob);
+
+  sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress: 10, status: '正在加载模型...' });
+
+  const transcriber = await loadWhisperPipeline();
+
+  sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress: 20, status: '正在转录...' });
+
+  // Estimate transcription time and report progress via interval
+  const audioDurationSec = audioData.length / 16000;
+  const estimatedTranscriptionSec = Math.max(audioDurationSec * 0.5, 10);
+  const progressStart = Date.now();
+  const progressInterval = setInterval(() => {
+    const elapsed = (Date.now() - progressStart) / 1000;
+    const ratio = Math.min(elapsed / estimatedTranscriptionSec, 0.95);
+    const progress = 20 + Math.round(ratio * 70);
+    sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress, status: `正在转录 (${Math.round(ratio * 100)}%)...` });
+  }, 2000);
+
+  let result;
+  try {
+    result = await transcriber(audioData, {
+      language: 'zh',
+      task: 'transcribe',
+      return_timestamps: true,
+      chunk_length_s: 30,
+      stride_length_s: 5,
+      no_repeat_ngram_size: 6,
+      repetition_penalty: 1.1,
+    });
+  } finally {
+    clearInterval(progressInterval);
+  }
+
+  return result.chunks || [{ timestamp: [0, duration], text: result.text }];
 }
 
 function sendMsg(message) {

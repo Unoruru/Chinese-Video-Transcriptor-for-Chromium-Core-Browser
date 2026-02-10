@@ -1,5 +1,7 @@
 export const WHISPER_MODEL = 'Xenova/whisper-small';
 
+export const DASHSCOPE_BASE_URL = 'https://dashscope.aliyuncs.com';
+
 export function formatTime(seconds) {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);

@@ -24,6 +24,10 @@ header {
   color: white;
 }
 
+header {
+  position: relative;
+}
+
 header h1 {
   font-size: 18px;
   font-weight: 600;
@@ -33,6 +37,152 @@ header .subtitle {
   font-size: 11px;
   opacity: 0.85;
   margin-top: 4px;
+}
+
+.btn-settings {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  line-height: 1;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.btn-settings:hover,
+.btn-settings:focus-visible {
+  color: white;
+}
+
+.btn-settings:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 2px;
+}
+
+.settings-panel {
+  background: white;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.settings-panel label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.api-key-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.api-key-row input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: monospace;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.api-key-row input:focus {
+  border-color: #667eea;
+}
+
+.btn-icon {
+  background: none;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 6px 8px;
+  font-size: 14px;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.btn-icon:hover {
+  background: #f0f0f0;
+}
+
+.btn-icon:focus-visible {
+  outline: 2px solid #667eea;
+  outline-offset: 2px;
+}
+
+.settings-hint {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 8px;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.btn-save {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+}
+
+.btn-clear {
+  background: #eee;
+  color: #555;
+}
+
+.settings-actions .btn {
+  padding: 6px 16px;
+  font-size: 12px;
+}
+
+.api-status {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.api-status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.api-status.configured::before {
+  background: #27ae60;
+}
+
+.api-status.not-configured::before {
+  background: #aaa;
+}
+
+.api-status:empty {
+  display: none;
 }
 
 .tab-info {
