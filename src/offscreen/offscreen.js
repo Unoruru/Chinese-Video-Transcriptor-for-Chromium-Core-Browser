@@ -132,7 +132,6 @@ function loadWhisperPipeline() {
     env.useBrowserCache = true;
     env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('/');
     env.backends.onnx.wasm.numThreads = navigator.hardwareConcurrency || 4;
-    env.backends.onnx.logLevel = 'error';
 
     // Detect WebGPU and pre-set adapter to avoid onnxruntime-web's
     // requestAdapter({ powerPreference }) which warns on Windows
@@ -161,6 +160,7 @@ function loadWhisperPipeline() {
     return await pipeline('automatic-speech-recognition', WHISPER_MODEL, {
       device,
       dtype,
+      session_options: { logSeverityLevel: 3 },
     });
   })().catch((err) => {
     whisperPipelinePromise = null;
