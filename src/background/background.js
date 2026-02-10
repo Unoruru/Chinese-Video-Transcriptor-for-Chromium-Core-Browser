@@ -238,12 +238,17 @@ async function handleStartRecording(tabId) {
   // Ensure offscreen document exists
   await ensureOffscreenDocument();
 
+  // Read DashScope API key so we can pass it explicitly to offscreen
+  const keyData = await chrome.storage.local.get('dashscopeApiKey');
+  const apiKey = keyData.dashscopeApiKey || '';
+
   // Send to offscreen document to start recording
   await chrome.runtime.sendMessage({
     type: MSG.OFFSCREEN_START_RECORDING,
     streamId,
     tabTitle: tab.title || 'Untitled',
     tabUrl: tab.url || '',
+    apiKey,
   });
 
   recordingTabId = tabId;

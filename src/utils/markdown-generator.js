@@ -1,6 +1,6 @@
 import { formatTime, WHISPER_MODEL } from './constants.js';
 
-export function generateMarkdown({ title, url, duration, language, segments }) {
+export function generateMarkdown({ title, url, duration, language, segments, model }) {
   const now = new Date().toISOString();
   const durationStr = formatTime(duration);
 
@@ -12,7 +12,7 @@ source: "${url}"
 duration: "${durationStr}"
 transcribed_at: "${now}"
 language: "${language || 'zh'}"
-model: "${WHISPER_MODEL}"
+model: "${model || WHISPER_MODEL}"
 ---
 
 # ${title}

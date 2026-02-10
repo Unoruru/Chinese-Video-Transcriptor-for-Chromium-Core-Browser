@@ -1,4 +1,3 @@
-import { pipeline, env } from '@huggingface/transformers';
 import * as OpenCC from 'opencc-js';
 import { MSG } from '../utils/messages.js';
 import { WHISPER_MODEL, sanitizeFilename } from '../utils/constants.js';
@@ -10,28 +9,6 @@ import { transcribe as dashscopeTranscribe } from '../utils/dashscope.js';
 // Traditional Chinese → Simplified Chinese converter
 const t2s = OpenCC.Converter({ from: 'tw', to: 'cn' });
 
-// Configure transformers.js for Chrome extension environment
-env.allowLocalModels = false;
-env.useBrowserCache = true;
-env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('/');
-env.backends.onnx.wasm.numThreads = navigator.hardwareConcurrency || 4;
-
-async function detectDevice() {
-  if (typeof navigator !== 'undefined' && navigator.gpu) {
-    try {
-      const adapter = await navigator.gpu.requestAdapter();
-      if (adapter) {
-        console.log('[Whisper] WebGPU adapter found');
-        return 'webgpu';
-      }
-    } catch (err) {
-      console.warn('[Whisper] WebGPU probe failed:', err.message);
-    }
-  }
-  console.log('[Whisper] WebGPU unavailable, falling back to WASM');
-  return 'wasm';
-}
-
 let mediaRecorder = null;
 let audioChunks = [];
 let recordingStartTime = null;
@@ -40,6 +17,7 @@ let tabUrl = '';
 let audioContext = null;
 let activeStream = null;
 let whisperPipelinePromise = null;
+let dashscopeApiKey = '';
 
 // Only pre-load Whisper if no DashScope API key is configured.
 // When cloud transcription is available, skip the heavy model download.
@@ -63,7 +41,7 @@ async function getApiKey() {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === MSG.OFFSCREEN_START_RECORDING) {
-    startRecording(message.streamId, message.tabTitle, message.tabUrl);
+    startRecording(message.streamId, message.tabTitle, message.tabUrl, message.apiKey);
     return false;
   }
   if (message.type === MSG.OFFSCREEN_STOP_RECORDING) {
@@ -81,7 +59,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-async function startRecording(streamId, title, url) {
+async function startRecording(streamId, title, url, apiKey) {
+  dashscopeApiKey = apiKey || '';
   tabTitle = title;
   tabUrl = url;
   audioChunks = [];
@@ -147,9 +126,34 @@ function resumeRecording() {
 function loadWhisperPipeline() {
   if (whisperPipelinePromise) return whisperPipelinePromise;
   whisperPipelinePromise = (async () => {
-    const device = await detectDevice();
-    // WebGPU: fp32 (GPU shaders optimized for float math)
-    // WASM: q8 (quantized, smaller download, fast on CPU)
+    const { pipeline, env } = await import('@huggingface/transformers');
+
+    env.allowLocalModels = false;
+    env.useBrowserCache = true;
+    env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('/');
+    env.backends.onnx.wasm.numThreads = navigator.hardwareConcurrency || 4;
+    env.backends.onnx.logLevel = 'error';
+
+    // Detect WebGPU and pre-set adapter to avoid onnxruntime-web's
+    // requestAdapter({ powerPreference }) which warns on Windows
+    let device = 'wasm';
+    if (typeof navigator !== 'undefined' && navigator.gpu) {
+      try {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (adapter) {
+          console.log('[Whisper] WebGPU adapter found');
+          env.backends.onnx.webgpu.adapter = adapter;
+          env.backends.onnx.webgpu.powerPreference = undefined;
+          device = 'webgpu';
+        }
+      } catch (err) {
+        console.warn('[Whisper] WebGPU probe failed:', err.message);
+      }
+    }
+    if (device === 'wasm') {
+      console.log('[Whisper] WebGPU unavailable, falling back to WASM');
+    }
+
     const dtype = device === 'webgpu'
       ? { encoder_model: 'fp32', decoder_model_merged: 'fp32' }
       : { encoder_model: 'q8', decoder_model_merged: 'q8' };
@@ -189,14 +193,14 @@ async function transcribeAudio() {
 
     sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress: 0, status: '正在处理音频...' });
 
-    const apiKey = await getApiKey();
+    const apiKey = dashscopeApiKey;
     let segments;
 
     if (apiKey) {
-      // Cloud transcription via DashScope Paraformer
+      console.warn(`[Transcribe] DashScope API key found (${apiKey.slice(0, 6)}...) — using CLOUD transcription`);
       segments = await transcribeWithDashScope(apiKey, audioBlob, duration);
     } else {
-      // Local transcription via Whisper
+      console.warn('[Transcribe] No DashScope API key — using LOCAL Whisper model (this will be slow)');
       segments = await transcribeWithWhisper(audioBlob, duration);
     }
 
@@ -210,12 +214,15 @@ async function transcribeAudio() {
     // Filter out hallucinated and repeated segments
     const cleanedSegments = filterHallucinations(segments);
 
+    const modelUsed = apiKey ? 'dashscope/paraformer-v2' : WHISPER_MODEL;
+
     const markdown = generateMarkdown({
       title: tabTitle,
       url: tabUrl,
       duration,
       language: 'zh',
       segments: cleanedSegments,
+      model: modelUsed,
     });
 
     // Send file to background for download (chrome.downloads is unavailable in offscreen)
@@ -241,22 +248,11 @@ async function transcribeWithDashScope(apiKey, audioBlob, duration) {
     sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress, status });
   };
 
-  try {
-    const segments = await dashscopeTranscribe(apiKey, audioBlob, onProgress);
-    if (segments.length === 0) {
-      return [{ text: '', timestamp: [0, duration] }];
-    }
-    return segments;
-  } catch (err) {
-    console.error('[DashScope] Cloud transcription failed:', err);
-    sendMsg({
-      type: MSG.TRANSCRIPTION_PROGRESS,
-      progress: 5,
-      status: '云端转录失败，切换到本地模型...',
-    });
-    // Fall back to local Whisper
-    return await transcribeWithWhisper(audioBlob, duration);
+  const segments = await dashscopeTranscribe(apiKey, audioBlob, onProgress);
+  if (segments.length === 0) {
+    return [{ text: '', timestamp: [0, duration] }];
   }
+  return segments;
 }
 
 async function transcribeWithWhisper(audioBlob, duration) {
