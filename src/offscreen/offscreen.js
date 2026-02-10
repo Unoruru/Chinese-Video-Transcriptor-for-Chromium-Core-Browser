@@ -93,7 +93,11 @@ async function startRecording(streamId, title, url, apiKey) {
     };
 
     mediaRecorder.onstop = () => {
-      transcribeAudio();
+      transcribeAudio().catch((err) => {
+        console.error('[Transcribe] Unhandled error:', err);
+        sendMsg({ type: MSG.ERROR, error: `转录失败: ${err.message}` });
+        cleanupMediaTracks();
+      });
     };
 
     mediaRecorder.start(1000); // collect data every second
@@ -197,10 +201,10 @@ async function transcribeAudio() {
     let segments;
 
     if (apiKey) {
-      console.warn(`[Transcribe] DashScope API key found (${apiKey.slice(0, 6)}...) — using CLOUD transcription`);
+      console.log(`[Transcribe] DashScope API key found (${apiKey.slice(0, 6)}...) — using CLOUD transcription`);
       segments = await transcribeWithDashScope(apiKey, audioBlob, duration);
     } else {
-      console.warn('[Transcribe] No DashScope API key — using LOCAL Whisper model (this will be slow)');
+      console.log('[Transcribe] No DashScope API key — using LOCAL Whisper model');
       segments = await transcribeWithWhisper(audioBlob, duration);
     }
 

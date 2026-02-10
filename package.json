@@ -1,6 +1,6 @@
 {
   "name": "video-transcriptor",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "A web-based application that automatically transcribes Chinese-language videos and exports transcripts in AI-optimized formats.",
   "type": "module",
   "scripts": {
