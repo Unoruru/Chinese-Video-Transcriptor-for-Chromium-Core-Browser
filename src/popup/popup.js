@@ -53,6 +53,42 @@ async function init() {
         setRecordingState();
       }
     }
+  } else {
+    // Not recording — check if we missed a completion or error while popup was closed
+    await checkForMissedResult();
+  }
+}
+
+async function checkForMissedResult() {
+  const data = await chrome.storage.local.get('lastTranscriptionResult');
+  const result = data.lastTranscriptionResult;
+  if (!result) return;
+
+  // Ignore stale results older than 5 minutes
+  if (result.timestamp && Date.now() - result.timestamp > 5 * 60 * 1000) {
+    chrome.storage.local.remove('lastTranscriptionResult').catch(() => {});
+    return;
+  }
+
+  // Clear stored result immediately so it only shows once
+  chrome.storage.local.remove('lastTranscriptionResult').catch(() => {});
+
+  if (result.type === MSG.TRANSCRIPTION_COMPLETE) {
+    statusIndicator.className = 'status-indicator complete';
+    statusText.textContent = '完成';
+    resultArea.style.display = 'block';
+    resultText.textContent = '转录完成！';
+    resultDetail.textContent = `文件: ${result.filename} | 分段: ${result.segmentCount} | 时长: ${formatTime(result.duration)}`;
+    btnStart.style.display = 'block';
+    btnStart.disabled = false;
+    btnStop.style.display = 'none';
+    btnPause.style.display = 'none';
+    btnResume.style.display = 'none';
+    progressArea.style.display = 'none';
+    setTimeout(setIdleState, 5000);
+  } else if (result.type === MSG.ERROR) {
+    showError(result.error);
+    setIdleState();
   }
 }
 

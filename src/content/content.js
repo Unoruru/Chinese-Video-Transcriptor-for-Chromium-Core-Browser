@@ -56,6 +56,62 @@
     .overlay.error {
       background: linear-gradient(135deg, #e53935, #b71c1c);
     }
+    .error-panel {
+      position: fixed;
+      top: 52px;
+      right: 12px;
+      z-index: 2147483647;
+      max-width: 420px;
+      max-height: 300px;
+      background: rgba(30, 30, 30, 0.95);
+      border: 1px solid #e53935;
+      border-radius: 8px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+    }
+    .error-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      font-size: 13px;
+      font-weight: 600;
+      color: #ef9a9a;
+    }
+    .error-panel-close {
+      width: 24px;
+      height: 24px;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: #fff;
+      font-size: 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    .error-panel-close:hover {
+      background: rgba(255,255,255,0.15);
+    }
+    .error-panel-close:focus-visible {
+      outline: 2px solid #fff;
+      outline-offset: -2px;
+    }
+    .error-panel-body {
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-y: auto;
+      word-break: break-word;
+      user-select: text;
+      -webkit-user-select: text;
+    }
     .dot {
       width: 8px;
       height: 8px;
@@ -212,11 +268,12 @@
         timerEl.textContent = '✓';
         autoHide(3000);
         break;
-      case 'error':
-        statusEl.textContent = '错误';
+      case 'error': {
+        statusEl.textContent = '出错';
         timerEl.textContent = '✗';
-        autoHide(5000);
+        showErrorPanel(data.error || '未知错误');
         break;
+      }
     }
   }
 
@@ -227,6 +284,31 @@
         container.remove();
       }, 500);
     }, delay);
+  }
+
+  function showErrorPanel(errorMsg) {
+    // Remove existing error panel if any
+    const existing = shadow.querySelector('.error-panel');
+    if (existing) existing.remove();
+
+    const panel = document.createElement('div');
+    panel.className = 'error-panel';
+    panel.setAttribute('role', 'alert');
+    panel.innerHTML = `
+      <div class="error-panel-header">
+        <span>转录出错</span>
+        <button class="error-panel-close" aria-label="关闭错误面板">&times;</button>
+      </div>
+      <div class="error-panel-body"></div>
+    `;
+    // Set error text via textContent to avoid XSS
+    panel.querySelector('.error-panel-body').textContent = errorMsg;
+
+    panel.querySelector('.error-panel-close').addEventListener('click', () => {
+      panel.remove();
+    });
+
+    shadow.appendChild(panel);
   }
 
   // Click handlers

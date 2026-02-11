@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chinese Video Auto-Transcriptor",
-  "version": "1.5.3",
+  "version": "1.5.5",
   "description": "自动转录中文视频音频，生成带时间戳的Markdown文件",
   "permissions": ["activeTab", "tabCapture", "offscreen", "storage", "downloads", "scripting"],
   "background": {

@@ -111,8 +111,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }).catch(() => {});
     }
 
-    // Handle completion and error states
+    // Handle completion and error states — clean up recording state
+    // so popup doesn't get stuck showing "recording" or "transcribing"
     if (message.type === MSG.TRANSCRIPTION_COMPLETE) {
+      recordingTabId = null;
+      isPaused = false;
+      pausedElapsedMs = 0;
+      chrome.storage.local.remove('recordingState').catch(() => {});
+      chrome.storage.local.set({
+        lastTranscriptionResult: { ...message, timestamp: Date.now() },
+      }).catch(() => {});
+
       setBadge('✓', '#43a047');
       if (statusTabId) {
         chrome.tabs.sendMessage(statusTabId, {
@@ -126,11 +135,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message.type === MSG.ERROR) {
+      recordingTabId = null;
+      isPaused = false;
+      pausedElapsedMs = 0;
+      chrome.storage.local.remove('recordingState').catch(() => {});
+      chrome.storage.local.set({
+        lastTranscriptionResult: { ...message, timestamp: Date.now() },
+      }).catch(() => {});
+
       setBadge('!', '#e53935');
       if (statusTabId) {
         chrome.tabs.sendMessage(statusTabId, {
           type: MSG.CONTENT_STATUS_UPDATE,
           state: 'error',
+          error: message.error || '未知错误',
         }).catch(() => {});
         statusTabId = null;
       }

@@ -2,55 +2,20 @@ import { DASHSCOPE_BASE_URL } from './constants.js';
 
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_ATTEMPTS = 300; // 10 minutes max
+const MAX_NULL_STATUS_POLLS = 5;
+const TERMINAL_STATUSES = new Set(['CANCELED', 'EXPIRED', 'UNKNOWN']);
 
 /**
- * Transcribe audio using DashScope Paraformer.
- * Tries the OpenAI-compatible sync endpoint first, falls back to async file-upload flow.
+ * Transcribe audio using DashScope Fun-ASR (async file-upload flow).
  *
  * @param {string} apiKey - DashScope API key
- * @param {Blob} audioBlob - Audio blob (WebM/Opus)
+ * @param {Blob} audioBlob - Audio blob (WAV 16kHz PCM)
  * @param {(progress: number, status: string) => void} onProgress - Progress callback
  * @returns {Promise<Array<{text: string, timestamp: [number, number]}>>} Parsed segments
  */
 export async function transcribe(apiKey, audioBlob, onProgress) {
   onProgress(5, '正在上传音频到云端...');
-
-  try {
-    const segments = await syncTranscribe(apiKey, audioBlob);
-    return segments;
-  } catch (syncErr) {
-    console.log('[DashScope] Sync endpoint failed, falling back to async:', syncErr.message);
-    return await asyncTranscribe(apiKey, audioBlob, onProgress);
-  }
-}
-
-/**
- * OpenAI-compatible sync transcription endpoint.
- */
-async function syncTranscribe(apiKey, audioBlob) {
-  const formData = new FormData();
-  formData.append('file', audioBlob, 'audio.webm');
-  formData.append('model', 'paraformer-v2');
-  formData.append('language', 'zh');
-  formData.append('response_format', 'verbose_json');
-
-  const response = await fetch(
-    `${DASHSCOPE_BASE_URL}/compatible-mode/v1/audio/transcriptions`,
-    {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: formData,
-    },
-  );
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`Sync transcription failed (${response.status}): ${body}`);
-  }
-
-  const result = await response.json();
-  console.log('[DashScope] Sync result:', result);
-  return parseSyncResult(result);
+  return await asyncTranscribe(apiKey, audioBlob, onProgress);
 }
 
 /**
@@ -73,25 +38,57 @@ async function asyncTranscribe(apiKey, audioBlob, onProgress) {
 }
 
 /**
+ * Safely fetch with context about which step failed.
+ */
+async function safeFetch(url, options, stepName) {
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (err) {
+    throw new Error(`[${stepName}] 网络请求失败: ${err.message}`);
+  }
+  return response;
+}
+
+/**
+ * Safely parse JSON from a response, with context on failure.
+ */
+async function safeJson(response, stepName) {
+  let text;
+  try {
+    text = await response.text();
+  } catch (err) {
+    throw new Error(`[${stepName}] 无法读取响应内容: ${err.message}`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    const preview = text.length > 200 ? text.slice(0, 200) + '...' : text;
+    throw new Error(`[${stepName}] 响应不是有效的JSON: ${preview}`);
+  }
+}
+
+/**
  * Upload audio file to DashScope via getPolicy + OSS POST flow.
  * Returns an oss:// URL for use with the async transcription API.
  */
 async function uploadFile(apiKey, audioBlob) {
   // Step 1: Get upload policy credentials
-  const policyResponse = await fetch(
-    `${DASHSCOPE_BASE_URL}/api/v1/uploads?action=getPolicy&model=paraformer-v2`,
+  const policyResponse = await safeFetch(
+    `${DASHSCOPE_BASE_URL}/api/v1/uploads?action=getPolicy&model=fun-asr`,
     {
       method: 'GET',
       headers: { Authorization: `Bearer ${apiKey}` },
     },
+    'uploadFile/getPolicy',
   );
 
   if (!policyResponse.ok) {
     const body = await policyResponse.text().catch(() => '');
-    throw new Error(`Upload getPolicy failed (${policyResponse.status}): ${body}`);
+    throw new Error(`[uploadFile/getPolicy] 请求失败 (${policyResponse.status}): ${body}`);
   }
 
-  const policyData = await policyResponse.json();
+  const policyData = await safeJson(policyResponse, 'uploadFile/getPolicy');
   console.log('[DashScope] Upload policy:', policyData);
 
   const {
@@ -105,7 +102,7 @@ async function uploadFile(apiKey, audioBlob) {
   } = policyData.data;
 
   // Step 2: POST multipart/form-data to OSS
-  const fileName = `audio_${Date.now()}.webm`;
+  const fileName = `audio_${Date.now()}.wav`;
   const objectKey = `${uploadDir}/${fileName}`;
 
   const formData = new FormData();
@@ -118,20 +115,18 @@ async function uploadFile(apiKey, audioBlob) {
   formData.append('success_action_status', '200');
   formData.append('file', audioBlob, fileName); // file must be last per OSS spec
 
-  const uploadResponse = await fetch(uploadHost, {
+  const uploadResponse = await safeFetch(uploadHost, {
     method: 'POST',
     body: formData,
-  });
+  }, 'uploadFile/ossUpload');
 
   if (!uploadResponse.ok) {
     const body = await uploadResponse.text().catch(() => '');
-    throw new Error(`OSS upload failed (${uploadResponse.status}): ${body}`);
+    throw new Error(`[uploadFile/ossUpload] OSS上传失败 (${uploadResponse.status}): ${body}`);
   }
 
-  // Step 3: Construct oss:// URL from upload_host and key
-  const url = new URL(uploadHost);
-  const bucket = url.hostname.split('.')[0];
-  const ossUrl = `oss://${bucket}/${objectKey}`;
+  // Step 3: Construct oss:// URL — format is oss://{key} (no bucket prefix)
+  const ossUrl = `oss://${objectKey}`;
 
   console.log('[DashScope] File uploaded to:', ossUrl);
   return ossUrl;
@@ -141,7 +136,7 @@ async function uploadFile(apiKey, audioBlob) {
  * Submit an async transcription task.
  */
 async function submitTask(apiKey, fileUrl) {
-  const response = await fetch(
+  const response = await safeFetch(
     `${DASHSCOPE_BASE_URL}/api/v1/services/audio/asr/transcription`,
     {
       method: 'POST',
@@ -152,7 +147,7 @@ async function submitTask(apiKey, fileUrl) {
         'X-DashScope-OssResourceResolve': 'enable',
       },
       body: JSON.stringify({
-        model: 'paraformer-v2',
+        model: 'fun-asr',
         input: {
           file_urls: [fileUrl],
         },
@@ -161,19 +156,20 @@ async function submitTask(apiKey, fileUrl) {
         },
       }),
     },
+    'submitTask',
   );
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Task submission failed (${response.status}): ${body}`);
+    throw new Error(`[submitTask] 任务提交失败 (${response.status}): ${body}`);
   }
 
-  const data = await response.json();
+  const data = await safeJson(response, 'submitTask');
   console.log('[DashScope] Task submitted:', data);
 
   const taskId = data.output?.task_id;
   if (!taskId) {
-    throw new Error('No task_id returned from DashScope');
+    throw new Error('[submitTask] DashScope未返回task_id');
   }
 
   return taskId;
@@ -183,22 +179,25 @@ async function submitTask(apiKey, fileUrl) {
  * Poll task status until completion.
  */
 async function pollTask(apiKey, taskId, onProgress) {
+  let nullStatusCount = 0;
+
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     await sleep(POLL_INTERVAL_MS);
 
-    const response = await fetch(
+    const response = await safeFetch(
       `${DASHSCOPE_BASE_URL}/api/v1/tasks/${taskId}`,
       {
         method: 'GET',
         headers: { Authorization: `Bearer ${apiKey}` },
       },
+      'pollTask',
     );
 
     if (!response.ok) {
-      throw new Error(`Task poll failed (${response.status})`);
+      throw new Error(`[pollTask] 轮询失败 (${response.status})`);
     }
 
-    const data = await response.json();
+    const data = await safeJson(response, 'pollTask');
     const status = data.output?.task_status;
 
     console.log(`[DashScope] Poll #${attempt + 1}: status=${status}`);
@@ -206,14 +205,36 @@ async function pollTask(apiKey, taskId, onProgress) {
     if (status === 'SUCCEEDED') {
       const results = data.output?.results;
       if (!results || results.length === 0) {
-        throw new Error('Task succeeded but no results returned');
+        throw new Error('[pollTask] 任务成功但未返回结果');
       }
-      return results[0].transcription_url;
+
+      const transcriptionUrl = results[0].transcription_url;
+      if (!transcriptionUrl || typeof transcriptionUrl !== 'string') {
+        throw new Error('[pollTask] 任务成功但transcription_url无效');
+      }
+
+      return transcriptionUrl;
     }
 
     if (status === 'FAILED') {
-      const errorMsg = data.output?.message || 'Unknown error';
-      throw new Error(`Transcription task failed: ${errorMsg}`);
+      const errorMsg = data.output?.message || '未知错误';
+      const errorCode = data.output?.code || '';
+      throw new Error(`[pollTask] 转录任务失败: ${errorCode ? errorCode + ' - ' : ''}${errorMsg}`);
+    }
+
+    // Handle terminal statuses that aren't SUCCEEDED or FAILED
+    if (TERMINAL_STATUSES.has(status)) {
+      throw new Error(`[pollTask] 任务终止，状态: ${status}`);
+    }
+
+    // Track null/undefined status
+    if (!status) {
+      nullStatusCount++;
+      if (nullStatusCount >= MAX_NULL_STATUS_POLLS) {
+        throw new Error(`[pollTask] 连续${MAX_NULL_STATUS_POLLS}次轮询返回空状态，任务可能已丢失`);
+      }
+    } else {
+      nullStatusCount = 0;
     }
 
     // Update progress (25-85% range during polling)
@@ -221,43 +242,22 @@ async function pollTask(apiKey, taskId, onProgress) {
     onProgress(Math.round(progress), `正在转录中 (${status || 'PENDING'})...`);
   }
 
-  throw new Error('Transcription task timed out');
+  throw new Error('[pollTask] 转录任务超时 (已等待10分钟)');
 }
 
 /**
  * Fetch and parse the transcription result JSON.
  */
 async function fetchResults(transcriptionUrl) {
-  const response = await fetch(transcriptionUrl);
+  const response = await safeFetch(transcriptionUrl, {}, 'fetchResults');
   if (!response.ok) {
-    throw new Error(`Failed to fetch results (${response.status})`);
+    throw new Error(`[fetchResults] 获取结果失败 (${response.status})`);
   }
 
-  const data = await response.json();
+  const data = await safeJson(response, 'fetchResults');
   console.log('[DashScope] Transcription result:', data);
 
   return parseAsyncResult(data);
-}
-
-/**
- * Parse the OpenAI-compatible sync response into our segment format.
- * Response may have `segments` or `words` arrays with start/end times.
- */
-function parseSyncResult(result) {
-  // verbose_json format has segments array
-  if (result.segments && result.segments.length > 0) {
-    return result.segments.map((seg) => ({
-      text: seg.text || '',
-      timestamp: [seg.start || 0, seg.end || 0],
-    }));
-  }
-
-  // Fallback: single text result
-  if (result.text) {
-    return [{ text: result.text, timestamp: [0, 0] }];
-  }
-
-  return [];
 }
 
 /**

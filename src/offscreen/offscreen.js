@@ -3,7 +3,7 @@ import { MSG } from '../utils/messages.js';
 import { WHISPER_MODEL, sanitizeFilename } from '../utils/constants.js';
 import { generateMarkdown } from '../utils/markdown-generator.js';
 import { filterHallucinations } from '../utils/hallucination-filter.js';
-import { blobToFloat32Audio } from './audio-processor.js';
+import { blobToFloat32Audio, float32ToWavBlob } from './audio-processor.js';
 import { transcribe as dashscopeTranscribe } from '../utils/dashscope.js';
 
 // Traditional Chinese → Simplified Chinese converter
@@ -192,6 +192,11 @@ async function transcribeAudio() {
   }, 25000);
 
   try {
+    if (audioChunks.length === 0) {
+      sendMsg({ type: MSG.ERROR, error: '录制音频为空，请重试' });
+      return;
+    }
+
     const duration = (Date.now() - recordingStartTime) / 1000;
     const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
 
@@ -218,7 +223,7 @@ async function transcribeAudio() {
     // Filter out hallucinated and repeated segments
     const cleanedSegments = filterHallucinations(segments);
 
-    const modelUsed = apiKey ? 'dashscope/paraformer-v2' : WHISPER_MODEL;
+    const modelUsed = apiKey ? 'dashscope/fun-asr' : WHISPER_MODEL;
 
     const markdown = generateMarkdown({
       title: tabTitle,
@@ -252,7 +257,11 @@ async function transcribeWithDashScope(apiKey, audioBlob, duration) {
     sendMsg({ type: MSG.TRANSCRIPTION_PROGRESS, progress, status });
   };
 
-  const segments = await dashscopeTranscribe(apiKey, audioBlob, onProgress);
+  // Convert WebM → WAV for DashScope (WebM not in supported format list)
+  const float32Audio = await blobToFloat32Audio(audioBlob);
+  const wavBlob = float32ToWavBlob(float32Audio);
+
+  const segments = await dashscopeTranscribe(apiKey, wavBlob, onProgress);
   if (segments.length === 0) {
     return [{ text: '', timestamp: [0, duration] }];
   }
